@@ -57,7 +57,7 @@ export default function GameApp() {
   const [recentIds, setRecentIds] = useState([])
   const [wheelKey, setWheelKey] = useState(0)
 
-  // Typewriter state: tracks how many chars to show for each revealed cell
+  // Typewriter state
   const [typingCells, setTypingCells] = useState({})
 
   // Session tracking
@@ -68,7 +68,6 @@ export default function GameApp() {
   const word = queue[qIdx] || null
   const correct = word ? word[mode] : {}
 
-  // Ref to track accumulated points for grid completion
   const gridPointsRef = useRef(0)
 
   // Typewriter animation effect
@@ -145,7 +144,6 @@ export default function GameApp() {
     nextWord(nQueue, nIdx, newRecent)
   }
 
-  // Wheel callback
   const onWheelSelect = (type, idx, ok) => {
     if (ok) {
       const segColor = WHEEL[idx].color
@@ -159,18 +157,14 @@ export default function GameApp() {
     }
   }
 
-  // ── Per-cell check (replaces batch onGridSubmit) ──
   const checkCell = useCallback((k) => {
-    // Skip if already resolved or grid is done
     if (cellOk[k] || cellRevealed[k] || gridDone) return
-    // Skip if cell is empty
     if (!answers[k].trim()) return
 
     const userAns = norm(answers[k])
     const rightAns = norm(correct[k])
 
     if (userAns === rightAns) {
-      // Correct!
       const att = attempts[k] + 1
       let pts = 0
       if (att === 1) pts = 1
@@ -184,38 +178,31 @@ export default function GameApp() {
       setCellFlash((prev) => ({ ...prev, [k]: true }))
       setTimeout(() => setCellFlash((prev) => ({ ...prev, [k]: false })), 650)
 
-      // Track session stats
       sessionStatsRef.current.correctAnswers += 1
       sessionStatsRef.current.totalAnswers += 1
 
-      // Check if grid is now complete
       const updatedOk = { ...cellOk, [k]: true }
       const updatedRevealed = { ...cellRevealed }
       checkGridComplete(updatedOk, updatedRevealed, { ...attempts, [k]: att })
     } else {
-      // Wrong
       const att = attempts[k] + 1
       setAttempts((prev) => ({ ...prev, [k]: att }))
       sessionStatsRef.current.totalAnswers += 1
 
       if (att >= 3) {
-        // Reveal with typewriter
         setCellRevealed((prev) => ({ ...prev, [k]: true }))
         setTypingCells((prev) => ({ ...prev, [k]: 0 }))
 
-        // Check if grid is now complete
         const updatedOk = { ...cellOk }
         const updatedRevealed = { ...cellRevealed, [k]: true }
         checkGridComplete(updatedOk, updatedRevealed, { ...attempts, [k]: att })
       } else {
-        // Shake
         setCellShake((prev) => ({ ...prev, [k]: true }))
         setTimeout(() => setCellShake((prev) => ({ ...prev, [k]: false })), 400)
       }
     }
   }, [cellOk, cellRevealed, gridDone, answers, attempts, correct])
 
-  // Check if all cells are resolved and finalize the grid
   const checkGridComplete = useCallback((updatedOk, updatedRevealed, updatedAttempts) => {
     const allDone = CELLS.every((c) => updatedOk[c] || updatedRevealed[c])
     if (!allDone) return
@@ -244,7 +231,6 @@ export default function GameApp() {
       setCorrectGridsTotal(newTotal)
       sessionStatsRef.current.leavesEarned += 1
 
-      // Save score to Supabase if logged in
       if (user) {
         saveScore({
           userId: user.id,
@@ -289,10 +275,8 @@ export default function GameApp() {
     if (e.key === 'Tab' || e.key === 'Enter') {
       e.preventDefault()
       if (e.key === 'Enter') {
-        // Check this cell first
         checkCell(k)
       }
-      // Move to next unfinished cell
       const idx = CELLS.indexOf(k)
       for (let i = 1; i <= CELLS.length; i++) {
         const nextKey = CELLS[(idx + i) % CELLS.length]
@@ -305,7 +289,6 @@ export default function GameApp() {
   }
 
   const onInputBlur = (k) => {
-    // Check cell when user leaves it (if it has content)
     if (answers[k].trim() && !cellOk[k] && !cellRevealed[k] && !gridDone) {
       checkCell(k)
     }
@@ -325,10 +308,68 @@ export default function GameApp() {
 
   const seasonKanji = SEASONS[season]
 
-  /* Nobori background style */
   const noboriStyle = {}
   if (noboriColor) {
     noboriStyle.backgroundColor = hexToRgba(noboriColor, 0.14)
+  }
+
+  /* Helper: render a single grid cell with label/hint above or below */
+  const renderCell = (k) => {
+    const lb = CELL_LABELS[k]
+    const isOk = cellOk[k]
+    const isRevealed = cellRevealed[k]
+    const att = attempts[k]
+    const shaking = cellShake[k]
+    const flashing = cellFlash[k]
+    let cls = 'ginput'
+    if (isOk) cls += ' ok'
+    else if (isRevealed) cls += ' shown'
+    else if (shaking) cls += ' err'
+    if (flashing) cls += ' flash-ok'
+
+    const fullAnswer = correct[k] || ''
+    const typingCount = typingCells[k]
+    const isTyping = isRevealed && typingCount !== undefined && typingCount < fullAnswer.length
+    const displayText = isRevealed
+      ? (typingCount !== undefined ? fullAnswer.slice(0, typingCount) : fullAnswer)
+      : ''
+
+    const isTopRow = k === 'presentPos' || k === 'pastPos'
+
+    const hintContent = isOk ? '\u2713' : isRevealed ? 'revealed' : att > 0 ? `${3 - att} ${3 - att === 1 ? 'try' : 'tries'} left` : '\u00A0'
+    const hintClass = `gcell-hint ${isOk ? 'green' : att > 0 && !isRevealed ? 'red' : ''}`
+
+    const labelEl = <div className="gcell-label">{lb.en}</div>
+    const hintEl = <div className={hintClass}>{hintContent}</div>
+    const inputEl = isRevealed ? (
+      <div className={`${cls}${isTyping ? ' typewriter' : ''}`} style={{ padding: '0.4rem 0.35rem', textAlign: 'center' }}>
+        {displayText}
+        {isTyping && <span className="tw-cursor">|</span>}
+      </div>
+    ) : (
+      <input
+        ref={(el) => { inputRefs.current[k] = el }}
+        className={cls}
+        value={isOk ? correct[k] : answers[k]}
+        onChange={(e) => !isOk && onInputChange(k, e.target.value)}
+        onKeyDown={(e) => onInputKey(e, k)}
+        onBlur={() => onInputBlur(k)}
+        disabled={isOk || gridDone}
+        autoComplete="off"
+        autoCorrect="off"
+        spellCheck="false"
+      />
+    )
+
+    return (
+      <div className={`gcell ${isTopRow ? 'gcell-top' : 'gcell-bottom'}`} key={k}>
+        {isTopRow && labelEl}
+        {isTopRow && hintEl}
+        {inputEl}
+        {!isTopRow && hintEl}
+        {!isTopRow && labelEl}
+      </div>
+    )
   }
 
   return (
@@ -345,7 +386,7 @@ export default function GameApp() {
       </div>
 
       <div className="main" style={{ background: SEASON_BG_TINT[season] }}>
-        {/* ── Nobori Banner ── */}
+        {/* ── Nobori Banner (pinned to top of main) ── */}
         <div className={`nobori${noboriFlash ? ' flash' : ''}`} style={noboriStyle}>
           <div className="nobori-rod" />
           <div className="nobori-content">
@@ -408,55 +449,7 @@ export default function GameApp() {
 
                 <div className="grid-area">
                   <div className="conj-grid">
-                    {CELLS.map((k) => {
-                      const lb = CELL_LABELS[k]
-                      const isOk = cellOk[k]
-                      const isRevealed = cellRevealed[k]
-                      const att = attempts[k]
-                      const shaking = cellShake[k]
-                      const flashing = cellFlash[k]
-                      let cls = 'ginput'
-                      if (isOk) cls += ' ok'
-                      else if (isRevealed) cls += ' shown'
-                      else if (shaking) cls += ' err'
-                      if (flashing) cls += ' flash-ok'
-
-                      // Typewriter: how many chars to show
-                      const fullAnswer = correct[k] || ''
-                      const typingCount = typingCells[k]
-                      const isTyping = isRevealed && typingCount !== undefined && typingCount < fullAnswer.length
-                      const displayText = isRevealed
-                        ? (typingCount !== undefined ? fullAnswer.slice(0, typingCount) : fullAnswer)
-                        : ''
-
-                      return (
-                        <div className="gcell" key={k}>
-                          {isRevealed ? (
-                            <div className={`${cls}${isTyping ? ' typewriter' : ''}`} style={{ padding: '0.4rem 0.35rem', textAlign: 'center' }}>
-                              {displayText}
-                              {isTyping && <span className="tw-cursor">|</span>}
-                            </div>
-                          ) : (
-                            <input
-                              ref={(el) => { inputRefs.current[k] = el }}
-                              className={cls}
-                              value={isOk ? correct[k] : answers[k]}
-                              onChange={(e) => !isOk && onInputChange(k, e.target.value)}
-                              onKeyDown={(e) => onInputKey(e, k)}
-                              onBlur={() => onInputBlur(k)}
-                              disabled={isOk || gridDone}
-                              placeholder={lb.placeholder}
-                              autoComplete="off"
-                              autoCorrect="off"
-                              spellCheck="false"
-                            />
-                          )}
-                          <div className={`gcell-hint ${isOk ? 'green' : att > 0 && !isRevealed ? 'red' : ''}`}>
-                            {isOk ? '\u2713' : isRevealed ? 'revealed' : att > 0 ? `${3 - att} ${3 - att === 1 ? 'try' : 'tries'} left` : '\u00A0'}
-                          </div>
-                        </div>
-                      )
-                    })}
+                    {CELLS.map((k) => renderCell(k))}
                   </div>
 
                   {gridDone && (
