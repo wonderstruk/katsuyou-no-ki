@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { toHiragana } from 'wanakana'
 import { useAuth } from '../contexts/AuthContext'
 import { saveScore, saveSession } from '../lib/scores'
@@ -57,6 +57,9 @@ export default function GameApp() {
   const [recentIds, setRecentIds] = useState([])
   const [wheelKey, setWheelKey] = useState(0)
 
+  // Typewriter state: tracks how many chars to show for each revealed cell
+  const [typingCells, setTypingCells] = useState({})
+
   // Session tracking
   const sessionStartRef = useRef(null)
   const sessionStatsRef = useRef({ wordsPracticed: 0, correctAnswers: 0, totalAnswers: 0, leavesEarned: 0 })
@@ -64,6 +67,29 @@ export default function GameApp() {
   const inputRefs = useRef({})
   const word = queue[qIdx] || null
   const correct = word ? word[mode] : {}
+
+  // Ref to track accumulated points for grid completion
+  const gridPointsRef = useRef(0)
+
+  // Typewriter animation effect
+  useEffect(() => {
+    const activeCells = Object.entries(typingCells).filter(([k, chars]) => {
+      const fullAnswer = correct[k] || ''
+      return chars < fullAnswer.length
+    })
+    if (activeCells.length === 0) return
+
+    const timer = setTimeout(() => {
+      setTypingCells((prev) => {
+        const next = { ...prev }
+        activeCells.forEach(([k, chars]) => {
+          next[k] = chars + 1
+        })
+        return next
+      })
+    }, 70)
+    return () => clearTimeout(timer)
+  }, [typingCells, correct])
 
   const startSession = useCallback(() => {
     const pool = getActiveWords()
@@ -97,7 +123,9 @@ export default function GameApp() {
     setCellFlash({})
     setGridDone(false)
     setWordScore(0)
+    setTypingCells({})
     setWheelKey((k) => k + 1)
+    gridPointsRef.current = 0
   }
 
   const advanceWord = () => {
@@ -131,112 +159,126 @@ export default function GameApp() {
     }
   }
 
-  // Grid submit
-  const onGridSubmit = () => {
-    if (gridDone) return
-    const newCellOk = { ...cellOk }
-    const newAttempts = { ...attempts }
-    const newRevealed = { ...cellRevealed }
-    const newShake = {}
-    const newFlash = {}
-    let pts = 0
+  // ── Per-cell check (replaces batch onGridSubmit) ──
+  const checkCell = useCallback((k) => {
+    // Skip if already resolved or grid is done
+    if (cellOk[k] || cellRevealed[k] || gridDone) return
+    // Skip if cell is empty
+    if (!answers[k].trim()) return
 
-    CELLS.forEach((k) => {
-      if (newCellOk[k] || newRevealed[k]) return
-      const userAns = norm(answers[k])
-      const rightAns = norm(correct[k])
-      if (userAns === rightAns) {
-        newCellOk[k] = true
-        newFlash[k] = true
-        const att = newAttempts[k] + 1
-        newAttempts[k] = att
-        if (att === 1) pts += 1
-        else if (att === 2) pts += 0.5
-        else if (att === 3) pts += 0.25
+    const userAns = norm(answers[k])
+    const rightAns = norm(correct[k])
+
+    if (userAns === rightAns) {
+      // Correct!
+      const att = attempts[k] + 1
+      let pts = 0
+      if (att === 1) pts = 1
+      else if (att === 2) pts = 0.5
+      else if (att === 3) pts = 0.25
+
+      gridPointsRef.current += pts
+
+      setCellOk((prev) => ({ ...prev, [k]: true }))
+      setAttempts((prev) => ({ ...prev, [k]: att }))
+      setCellFlash((prev) => ({ ...prev, [k]: true }))
+      setTimeout(() => setCellFlash((prev) => ({ ...prev, [k]: false })), 650)
+
+      // Track session stats
+      sessionStatsRef.current.correctAnswers += 1
+      sessionStatsRef.current.totalAnswers += 1
+
+      // Check if grid is now complete
+      const updatedOk = { ...cellOk, [k]: true }
+      const updatedRevealed = { ...cellRevealed }
+      checkGridComplete(updatedOk, updatedRevealed, { ...attempts, [k]: att })
+    } else {
+      // Wrong
+      const att = attempts[k] + 1
+      setAttempts((prev) => ({ ...prev, [k]: att }))
+      sessionStatsRef.current.totalAnswers += 1
+
+      if (att >= 3) {
+        // Reveal with typewriter
+        setCellRevealed((prev) => ({ ...prev, [k]: true }))
+        setTypingCells((prev) => ({ ...prev, [k]: 0 }))
+
+        // Check if grid is now complete
+        const updatedOk = { ...cellOk }
+        const updatedRevealed = { ...cellRevealed, [k]: true }
+        checkGridComplete(updatedOk, updatedRevealed, { ...attempts, [k]: att })
       } else {
-        const att = newAttempts[k] + 1
-        newAttempts[k] = att
-        if (att >= 3) {
-          newRevealed[k] = true
-        } else {
-          newShake[k] = true
-        }
+        // Shake
+        setCellShake((prev) => ({ ...prev, [k]: true }))
+        setTimeout(() => setCellShake((prev) => ({ ...prev, [k]: false })), 400)
       }
-    })
+    }
+  }, [cellOk, cellRevealed, gridDone, answers, attempts, correct])
 
-    setCellOk(newCellOk)
-    setAttempts(newAttempts)
-    setCellRevealed(newRevealed)
-    setCellShake(newShake)
-    setCellFlash(newFlash)
-    setTimeout(() => setCellShake({}), 400)
-    setTimeout(() => setCellFlash({}), 650)
+  // Check if all cells are resolved and finalize the grid
+  const checkGridComplete = useCallback((updatedOk, updatedRevealed, updatedAttempts) => {
+    const allDone = CELLS.every((c) => updatedOk[c] || updatedRevealed[c])
+    if (!allDone) return
 
-    const allDone = CELLS.every((k) => newCellOk[k] || newRevealed[k])
-    const allCorrect = CELLS.every((k) => newCellOk[k])
-    const allFirstTry = CELLS.every((k) => newCellOk[k] && newAttempts[k] === 1)
+    const allCorrect = CELLS.every((c) => updatedOk[c])
+    const allFirstTry = CELLS.every((c) => updatedOk[c] && updatedAttempts[c] === 1)
 
-    // Track session stats
-    const correctCount = CELLS.filter((k) => newCellOk[k] && !cellOk[k]).length
-    sessionStatsRef.current.correctAnswers += correctCount
-    sessionStatsRef.current.totalAnswers += CELLS.filter((k) => !cellOk[k] && !cellRevealed[k]).length
+    let pts = gridPointsRef.current
+    if (allFirstTry) pts += 2
+    if (wheelFirstTry) pts += 1
 
-    if (allDone) {
-      if (allFirstTry) pts += 2
-      if (wheelFirstTry) pts += 1
+    setWordScore(pts)
+    setScore((s) => s + pts)
+    setGridDone(true)
+    sessionStatsRef.current.wordsPracticed += 1
 
-      setWordScore(pts)
-      setScore((s) => s + pts)
-      setGridDone(true)
-      sessionStatsRef.current.wordsPracticed += 1
+    if (allFirstTry) {
+      setStreak((s) => { const n = s + 1; setBestStreak((b) => Math.max(b, n)); return n })
+    } else {
+      setStreak(0)
+    }
 
-      if (allFirstTry) {
-        setStreak((s) => { const n = s + 1; setBestStreak((b) => Math.max(b, n)); return n })
+    if (allCorrect) {
+      const correctCount = CELLS.filter((c) => updatedOk[c]).length
+      const newTotal = correctGridsTotal + 1
+      setCorrectGridsTotal(newTotal)
+      sessionStatsRef.current.leavesEarned += 1
+
+      // Save score to Supabase if logged in
+      if (user) {
+        saveScore({
+          userId: user.id,
+          word: word.hiragana,
+          wordType: word.conjugationType,
+          speechLevel: mode,
+          correct: correctCount,
+          total: CELLS.length,
+        })
+      }
+
+      if (leafCycleActive) {
+        const newLC = leafCycleCount + 1
+        setLeafCycleCount(newLC)
+        if (newLC >= leafCycleTarget) {
+          setLeafCycleActive(false)
+          setLeafCycleCount(0)
+          setLeafCycleTarget(0)
+          setSeason((s) => (s + 1) % 4)
+        }
       } else {
-        setStreak(0)
-      }
-
-      if (allCorrect) {
-        const newTotal = correctGridsTotal + 1
-        setCorrectGridsTotal(newTotal)
-        sessionStatsRef.current.leavesEarned += 1
-
-        // Save score to Supabase if logged in
-        if (user) {
-          saveScore({
-            userId: user.id,
-            word: word.hiragana,
-            wordType: word.conjugationType,
-            speechLevel: mode,
-            correct: correctCount,
-            total: CELLS.length,
-          })
-        }
-
-        if (leafCycleActive) {
-          const newLC = leafCycleCount + 1
-          setLeafCycleCount(newLC)
-          if (newLC >= leafCycleTarget) {
-            setLeafCycleActive(false)
+        const gridsPerStage = 10
+        const newStage = Math.min(Math.floor(newTotal / gridsPerStage), 10)
+        if (newStage > treeStage) {
+          setTreeStage(newStage)
+          if (newStage >= 10 && !leafCycleActive) {
+            setLeafCycleActive(true)
             setLeafCycleCount(0)
-            setLeafCycleTarget(0)
-            setSeason((s) => (s + 1) % 4)
-          }
-        } else {
-          const gridsPerStage = 10
-          const newStage = Math.min(Math.floor(newTotal / gridsPerStage), 10)
-          if (newStage > treeStage) {
-            setTreeStage(newStage)
-            if (newStage >= 10 && !leafCycleActive) {
-              setLeafCycleActive(true)
-              setLeafCycleCount(0)
-              setLeafCycleTarget(10)
-            }
+            setLeafCycleTarget(10)
           }
         }
       }
     }
-  }
+  }, [wheelFirstTry, correctGridsTotal, user, word, mode, leafCycleActive, leafCycleCount, leafCycleTarget, treeStage])
 
   const onInputChange = (k, val) => {
     const converted = inputMode === 'romaji' ? toHiragana(val, { IMEMode: true }) : val
@@ -246,14 +288,26 @@ export default function GameApp() {
   const onInputKey = (e, k) => {
     if (e.key === 'Tab' || e.key === 'Enter') {
       e.preventDefault()
-      if (e.key === 'Enter' && !e.shiftKey) {
-        const allFilled = CELLS.every((c) => cellOk[c] || cellRevealed[c] || answers[c].trim())
-        if (allFilled) { onGridSubmit(); return }
+      if (e.key === 'Enter') {
+        // Check this cell first
+        checkCell(k)
       }
+      // Move to next unfinished cell
       const idx = CELLS.indexOf(k)
-      const nextIdx = (idx + 1) % CELLS.length
-      const nextKey = CELLS[nextIdx]
-      if (inputRefs.current[nextKey]) inputRefs.current[nextKey].focus()
+      for (let i = 1; i <= CELLS.length; i++) {
+        const nextKey = CELLS[(idx + i) % CELLS.length]
+        if (!cellOk[nextKey] && !cellRevealed[nextKey]) {
+          if (inputRefs.current[nextKey]) inputRefs.current[nextKey].focus()
+          return
+        }
+      }
+    }
+  }
+
+  const onInputBlur = (k) => {
+    // Check cell when user leaves it (if it has content)
+    if (answers[k].trim() && !cellOk[k] && !cellRevealed[k] && !gridDone) {
+      checkCell(k)
     }
   }
 
@@ -367,10 +421,21 @@ export default function GameApp() {
                       else if (shaking) cls += ' err'
                       if (flashing) cls += ' flash-ok'
 
+                      // Typewriter: how many chars to show
+                      const fullAnswer = correct[k] || ''
+                      const typingCount = typingCells[k]
+                      const isTyping = isRevealed && typingCount !== undefined && typingCount < fullAnswer.length
+                      const displayText = isRevealed
+                        ? (typingCount !== undefined ? fullAnswer.slice(0, typingCount) : fullAnswer)
+                        : ''
+
                       return (
                         <div className="gcell" key={k}>
                           {isRevealed ? (
-                            <div className={cls} style={{ padding: '0.4rem 0.35rem', textAlign: 'center' }}>{correct[k]}</div>
+                            <div className={`${cls}${isTyping ? ' typewriter' : ''}`} style={{ padding: '0.4rem 0.35rem', textAlign: 'center' }}>
+                              {displayText}
+                              {isTyping && <span className="tw-cursor">|</span>}
+                            </div>
                           ) : (
                             <input
                               ref={(el) => { inputRefs.current[k] = el }}
@@ -378,6 +443,7 @@ export default function GameApp() {
                               value={isOk ? correct[k] : answers[k]}
                               onChange={(e) => !isOk && onInputChange(k, e.target.value)}
                               onKeyDown={(e) => onInputKey(e, k)}
+                              onBlur={() => onInputBlur(k)}
                               disabled={isOk || gridDone}
                               placeholder={lb.placeholder}
                               autoComplete="off"
@@ -393,9 +459,7 @@ export default function GameApp() {
                     })}
                   </div>
 
-                  {!gridDone ? (
-                    <button className="btn-submit" onClick={onGridSubmit}>Check Answers</button>
-                  ) : (
+                  {gridDone && (
                     <>
                       <div className={`result-banner ${wordScore >= 7 ? 'perfect' : 'good'}`}>
                         {wordScore >= 7 ? 'Perfect! +7' : `+${wordScore.toFixed(1)} points`}
