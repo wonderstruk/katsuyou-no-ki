@@ -86,7 +86,7 @@ export default function GameApp() {
         })
         return next
       })
-    }, 70)
+    }, 140)
     return () => clearTimeout(timer)
   }, [typingCells, correct])
 
