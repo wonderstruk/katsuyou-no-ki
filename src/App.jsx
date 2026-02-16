@@ -10,7 +10,7 @@ function AppContent() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontFamily: "'Shippori Mincho',serif", fontSize: '2rem', fontWeight: 800, marginBottom: '0.5rem' }}>活用の木</div>
-          <div style={{ fontSize: '0.85rem', color: '#888' }}>Loading...</div>
+          <div style={{ fontSize: '0.85rem', color: '#494850', opacity: 0.55 }}>Loading...</div>
         </div>
       </div>
     )

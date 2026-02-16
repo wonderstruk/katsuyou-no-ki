@@ -76,7 +76,7 @@ export default function TreeView({ stage, season, correctGrids, leafCycleActive,
   }
   if (season === 0 && atmosRef.current.spring) {
     atmosRef.current.spring.forEach((p, i) => atmos.push(
-      <circle key={`petal-${i}`} cx={p.cx} cy={p.cy} r={p.r} fill="#FFB6C1" opacity={p.op}>
+      <circle key={`petal-${i}`} cx={p.cx} cy={p.cy} r={p.r} fill="#da977c" opacity={p.op}>
         <animate attributeName="cy" values={`${p.cy};${p.cyEnd}`} dur={`${p.durY}s`} repeatCount="indefinite" />
         <animate attributeName="cx" values={`${p.cx};${p.cxEnd}`} dur={`${p.durX}s`} repeatCount="indefinite" />
       </circle>
@@ -84,7 +84,7 @@ export default function TreeView({ stage, season, correctGrids, leafCycleActive,
   }
   if (season === 3 && atmosRef.current.winter) {
     atmosRef.current.winter.forEach((s, i) => atmos.push(
-      <circle key={`snow-${i}`} cx={s.cx} cy={s.cy} r={s.r} fill="#D8E8F0" opacity={s.op}>
+      <circle key={`snow-${i}`} cx={s.cx} cy={s.cy} r={s.r} fill="#c6c5c3" opacity={s.op}>
         <animate attributeName="cy" values={`${s.cyStart};380`} dur={`${s.durY}s`} repeatCount="indefinite" />
         <animate attributeName="cx" values={`${s.cx};${s.cxEnd}`} dur={`${s.durX}s`} repeatCount="indefinite" />
       </circle>
@@ -97,8 +97,8 @@ export default function TreeView({ stage, season, correctGrids, leafCycleActive,
   return (
     <svg viewBox="0 0 400 400" className="tree-svg" style={{ overflow: 'visible' }}>
       {atmos}
-      <ellipse cx="200" cy="370" rx={60 + stage * 3} ry="18" fill="#A88B6A" opacity="0.3" />
-      <ellipse cx="200" cy="368" rx={55 + stage * 2.5} ry="14" fill="#C4A672" opacity="0.2" />
+      <ellipse cx="200" cy="370" rx={60 + stage * 3} ry="18" fill="#ab5d3c" opacity="0.25" />
+      <ellipse cx="200" cy="368" rx={55 + stage * 2.5} ry="14" fill="#da977c" opacity="0.2" />
       {stage >= 1 && <>
         <path
           d={`M${200 - trunkWidth / 2},370 Q${198 - trunkWidth / 3},${370 - trunkHeight * 0.5} ${197},${370 - trunkHeight}

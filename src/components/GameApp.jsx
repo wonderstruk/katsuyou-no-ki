@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import { toHiragana } from 'wanakana'
 import { useAuth } from '../contexts/AuthContext'
 import { saveScore, saveSession } from '../lib/scores'
@@ -57,9 +57,6 @@ export default function GameApp() {
   const [recentIds, setRecentIds] = useState([])
   const [wheelKey, setWheelKey] = useState(0)
 
-  // Typewriter state
-  const [typingCells, setTypingCells] = useState({})
-
   // Session tracking
   const sessionStartRef = useRef(null)
   const sessionStatsRef = useRef({ wordsPracticed: 0, correctAnswers: 0, totalAnswers: 0, leavesEarned: 0 })
@@ -67,28 +64,6 @@ export default function GameApp() {
   const inputRefs = useRef({})
   const word = queue[qIdx] || null
   const correct = word ? word[mode] : {}
-
-  const gridPointsRef = useRef(0)
-
-  // Typewriter animation effect
-  useEffect(() => {
-    const activeCells = Object.entries(typingCells).filter(([k, chars]) => {
-      const fullAnswer = correct[k] || ''
-      return chars < fullAnswer.length
-    })
-    if (activeCells.length === 0) return
-
-    const timer = setTimeout(() => {
-      setTypingCells((prev) => {
-        const next = { ...prev }
-        activeCells.forEach(([k, chars]) => {
-          next[k] = chars + 1
-        })
-        return next
-      })
-    }, 140)
-    return () => clearTimeout(timer)
-  }, [typingCells, correct])
 
   const startSession = useCallback(() => {
     const pool = getActiveWords()
@@ -122,9 +97,7 @@ export default function GameApp() {
     setCellFlash({})
     setGridDone(false)
     setWordScore(0)
-    setTypingCells({})
     setWheelKey((k) => k + 1)
-    gridPointsRef.current = 0
   }
 
   const advanceWord = () => {
@@ -144,6 +117,7 @@ export default function GameApp() {
     nextWord(nQueue, nIdx, newRecent)
   }
 
+  // Wheel callback
   const onWheelSelect = (type, idx, ok) => {
     if (ok) {
       const segColor = WHEEL[idx].color
@@ -157,114 +131,112 @@ export default function GameApp() {
     }
   }
 
-  const checkCell = useCallback((k) => {
-    if (cellOk[k] || cellRevealed[k] || gridDone) return
-    if (!answers[k].trim()) return
+  // Grid submit
+  const onGridSubmit = () => {
+    if (gridDone) return
+    const newCellOk = { ...cellOk }
+    const newAttempts = { ...attempts }
+    const newRevealed = { ...cellRevealed }
+    const newShake = {}
+    const newFlash = {}
+    let pts = 0
 
-    const userAns = norm(answers[k])
-    const rightAns = norm(correct[k])
-
-    if (userAns === rightAns) {
-      const att = attempts[k] + 1
-      let pts = 0
-      if (att === 1) pts = 1
-      else if (att === 2) pts = 0.5
-      else if (att === 3) pts = 0.25
-
-      gridPointsRef.current += pts
-
-      setCellOk((prev) => ({ ...prev, [k]: true }))
-      setAttempts((prev) => ({ ...prev, [k]: att }))
-      setCellFlash((prev) => ({ ...prev, [k]: true }))
-      setTimeout(() => setCellFlash((prev) => ({ ...prev, [k]: false })), 650)
-
-      sessionStatsRef.current.correctAnswers += 1
-      sessionStatsRef.current.totalAnswers += 1
-
-      const updatedOk = { ...cellOk, [k]: true }
-      const updatedRevealed = { ...cellRevealed }
-      checkGridComplete(updatedOk, updatedRevealed, { ...attempts, [k]: att })
-    } else {
-      const att = attempts[k] + 1
-      setAttempts((prev) => ({ ...prev, [k]: att }))
-      sessionStatsRef.current.totalAnswers += 1
-
-      if (att >= 3) {
-        setCellRevealed((prev) => ({ ...prev, [k]: true }))
-        setTypingCells((prev) => ({ ...prev, [k]: 0 }))
-
-        const updatedOk = { ...cellOk }
-        const updatedRevealed = { ...cellRevealed, [k]: true }
-        checkGridComplete(updatedOk, updatedRevealed, { ...attempts, [k]: att })
+    CELLS.forEach((k) => {
+      if (newCellOk[k] || newRevealed[k]) return
+      const userAns = norm(answers[k])
+      const rightAns = norm(correct[k])
+      if (userAns === rightAns) {
+        newCellOk[k] = true
+        newFlash[k] = true
+        const att = newAttempts[k] + 1
+        newAttempts[k] = att
+        if (att === 1) pts += 1
+        else if (att === 2) pts += 0.5
+        else if (att === 3) pts += 0.25
       } else {
-        setCellShake((prev) => ({ ...prev, [k]: true }))
-        setTimeout(() => setCellShake((prev) => ({ ...prev, [k]: false })), 400)
-      }
-    }
-  }, [cellOk, cellRevealed, gridDone, answers, attempts, correct])
-
-  const checkGridComplete = useCallback((updatedOk, updatedRevealed, updatedAttempts) => {
-    const allDone = CELLS.every((c) => updatedOk[c] || updatedRevealed[c])
-    if (!allDone) return
-
-    const allCorrect = CELLS.every((c) => updatedOk[c])
-    const allFirstTry = CELLS.every((c) => updatedOk[c] && updatedAttempts[c] === 1)
-
-    let pts = gridPointsRef.current
-    if (allFirstTry) pts += 2
-    if (wheelFirstTry) pts += 1
-
-    setWordScore(pts)
-    setScore((s) => s + pts)
-    setGridDone(true)
-    sessionStatsRef.current.wordsPracticed += 1
-
-    if (allFirstTry) {
-      setStreak((s) => { const n = s + 1; setBestStreak((b) => Math.max(b, n)); return n })
-    } else {
-      setStreak(0)
-    }
-
-    if (allCorrect) {
-      const correctCount = CELLS.filter((c) => updatedOk[c]).length
-      const newTotal = correctGridsTotal + 1
-      setCorrectGridsTotal(newTotal)
-      sessionStatsRef.current.leavesEarned += 1
-
-      if (user) {
-        saveScore({
-          userId: user.id,
-          word: word.hiragana,
-          wordType: word.conjugationType,
-          speechLevel: mode,
-          correct: correctCount,
-          total: CELLS.length,
-        })
-      }
-
-      if (leafCycleActive) {
-        const newLC = leafCycleCount + 1
-        setLeafCycleCount(newLC)
-        if (newLC >= leafCycleTarget) {
-          setLeafCycleActive(false)
-          setLeafCycleCount(0)
-          setLeafCycleTarget(0)
-          setSeason((s) => (s + 1) % 4)
+        const att = newAttempts[k] + 1
+        newAttempts[k] = att
+        if (att >= 3) {
+          newRevealed[k] = true
+        } else {
+          newShake[k] = true
         }
+      }
+    })
+
+    setCellOk(newCellOk)
+    setAttempts(newAttempts)
+    setCellRevealed(newRevealed)
+    setCellShake(newShake)
+    setCellFlash(newFlash)
+    setTimeout(() => setCellShake({}), 400)
+    setTimeout(() => setCellFlash({}), 650)
+
+    const allDone = CELLS.every((k) => newCellOk[k] || newRevealed[k])
+    const allCorrect = CELLS.every((k) => newCellOk[k])
+    const allFirstTry = CELLS.every((k) => newCellOk[k] && newAttempts[k] === 1)
+
+    // Track session stats
+    const correctCount = CELLS.filter((k) => newCellOk[k] && !cellOk[k]).length
+    sessionStatsRef.current.correctAnswers += correctCount
+    sessionStatsRef.current.totalAnswers += CELLS.filter((k) => !cellOk[k] && !cellRevealed[k]).length
+
+    if (allDone) {
+      if (allFirstTry) pts += 2
+      if (wheelFirstTry) pts += 1
+
+      setWordScore(pts)
+      setScore((s) => s + pts)
+      setGridDone(true)
+      sessionStatsRef.current.wordsPracticed += 1
+
+      if (allFirstTry) {
+        setStreak((s) => { const n = s + 1; setBestStreak((b) => Math.max(b, n)); return n })
       } else {
-        const gridsPerStage = 10
-        const newStage = Math.min(Math.floor(newTotal / gridsPerStage), 10)
-        if (newStage > treeStage) {
-          setTreeStage(newStage)
-          if (newStage >= 10 && !leafCycleActive) {
-            setLeafCycleActive(true)
+        setStreak(0)
+      }
+
+      if (allCorrect) {
+        const newTotal = correctGridsTotal + 1
+        setCorrectGridsTotal(newTotal)
+        sessionStatsRef.current.leavesEarned += 1
+
+        // Save score to Supabase if logged in
+        if (user) {
+          saveScore({
+            userId: user.id,
+            word: word.hiragana,
+            wordType: word.conjugationType,
+            speechLevel: mode,
+            correct: correctCount,
+            total: CELLS.length,
+          })
+        }
+
+        if (leafCycleActive) {
+          const newLC = leafCycleCount + 1
+          setLeafCycleCount(newLC)
+          if (newLC >= leafCycleTarget) {
+            setLeafCycleActive(false)
             setLeafCycleCount(0)
-            setLeafCycleTarget(10)
+            setLeafCycleTarget(0)
+            setSeason((s) => (s + 1) % 4)
+          }
+        } else {
+          const gridsPerStage = 10
+          const newStage = Math.min(Math.floor(newTotal / gridsPerStage), 10)
+          if (newStage > treeStage) {
+            setTreeStage(newStage)
+            if (newStage >= 10 && !leafCycleActive) {
+              setLeafCycleActive(true)
+              setLeafCycleCount(0)
+              setLeafCycleTarget(10)
+            }
           }
         }
       }
     }
-  }, [wheelFirstTry, correctGridsTotal, user, word, mode, leafCycleActive, leafCycleCount, leafCycleTarget, treeStage])
+  }
 
   const onInputChange = (k, val) => {
     const converted = inputMode === 'romaji' ? toHiragana(val, { IMEMode: true }) : val
@@ -274,23 +246,14 @@ export default function GameApp() {
   const onInputKey = (e, k) => {
     if (e.key === 'Tab' || e.key === 'Enter') {
       e.preventDefault()
-      if (e.key === 'Enter') {
-        checkCell(k)
+      if (e.key === 'Enter' && !e.shiftKey) {
+        const allFilled = CELLS.every((c) => cellOk[c] || cellRevealed[c] || answers[c].trim())
+        if (allFilled) { onGridSubmit(); return }
       }
       const idx = CELLS.indexOf(k)
-      for (let i = 1; i <= CELLS.length; i++) {
-        const nextKey = CELLS[(idx + i) % CELLS.length]
-        if (!cellOk[nextKey] && !cellRevealed[nextKey]) {
-          if (inputRefs.current[nextKey]) inputRefs.current[nextKey].focus()
-          return
-        }
-      }
-    }
-  }
-
-  const onInputBlur = (k) => {
-    if (answers[k].trim() && !cellOk[k] && !cellRevealed[k] && !gridDone) {
-      checkCell(k)
+      const nextIdx = (idx + 1) % CELLS.length
+      const nextKey = CELLS[nextIdx]
+      if (inputRefs.current[nextKey]) inputRefs.current[nextKey].focus()
     }
   }
 
@@ -308,68 +271,10 @@ export default function GameApp() {
 
   const seasonKanji = SEASONS[season]
 
+  /* Nobori background style */
   const noboriStyle = {}
   if (noboriColor) {
     noboriStyle.backgroundColor = hexToRgba(noboriColor, 0.14)
-  }
-
-  /* Helper: render a single grid cell with label/hint above or below */
-  const renderCell = (k) => {
-    const lb = CELL_LABELS[k]
-    const isOk = cellOk[k]
-    const isRevealed = cellRevealed[k]
-    const att = attempts[k]
-    const shaking = cellShake[k]
-    const flashing = cellFlash[k]
-    let cls = 'ginput'
-    if (isOk) cls += ' ok'
-    else if (isRevealed) cls += ' shown'
-    else if (shaking) cls += ' err'
-    if (flashing) cls += ' flash-ok'
-
-    const fullAnswer = correct[k] || ''
-    const typingCount = typingCells[k]
-    const isTyping = isRevealed && typingCount !== undefined && typingCount < fullAnswer.length
-    const displayText = isRevealed
-      ? (typingCount !== undefined ? fullAnswer.slice(0, typingCount) : fullAnswer)
-      : ''
-
-    const isTopRow = k === 'presentPos' || k === 'pastPos'
-
-    const hintContent = isOk ? '\u2713' : isRevealed ? 'revealed' : att > 0 ? `${3 - att} ${3 - att === 1 ? 'try' : 'tries'} left` : '\u00A0'
-    const hintClass = `gcell-hint ${isOk ? 'green' : att > 0 && !isRevealed ? 'red' : ''}`
-
-    const labelEl = <div className="gcell-label">{lb.en}</div>
-    const hintEl = <div className={hintClass}>{hintContent}</div>
-    const inputEl = isRevealed ? (
-      <div className={`${cls}${isTyping ? ' typewriter' : ''}`} style={{ padding: '0.4rem 0.35rem', textAlign: 'center' }}>
-        {displayText}
-        {isTyping && <span className="tw-cursor">|</span>}
-      </div>
-    ) : (
-      <input
-        ref={(el) => { inputRefs.current[k] = el }}
-        className={cls}
-        value={isOk ? correct[k] : answers[k]}
-        onChange={(e) => !isOk && onInputChange(k, e.target.value)}
-        onKeyDown={(e) => onInputKey(e, k)}
-        onBlur={() => onInputBlur(k)}
-        disabled={isOk || gridDone}
-        autoComplete="off"
-        autoCorrect="off"
-        spellCheck="false"
-      />
-    )
-
-    return (
-      <div className={`gcell ${isTopRow ? 'gcell-top' : 'gcell-bottom'}`} key={k}>
-        {isTopRow && labelEl}
-        {isTopRow && hintEl}
-        {inputEl}
-        {!isTopRow && hintEl}
-        {!isTopRow && labelEl}
-      </div>
-    )
   }
 
   return (
@@ -386,7 +291,7 @@ export default function GameApp() {
       </div>
 
       <div className="main" style={{ background: SEASON_BG_TINT[season] }}>
-        {/* ── Nobori Banner (pinned to top of main) ── */}
+        {/* ── Nobori Banner ── */}
         <div className={`nobori${noboriFlash ? ' flash' : ''}`} style={noboriStyle}>
           <div className="nobori-rod" />
           <div className="nobori-content">
@@ -396,7 +301,7 @@ export default function GameApp() {
                 <div className="app-title">活用の木</div>
                 <div className="app-sub">The Conjugation Tree</div>
                 {profile && (
-                  <div style={{ fontSize: '0.8rem', color: '#888', marginBottom: '0.5rem' }}>
+                  <div style={{ fontSize: '0.8rem', color: '#494850', opacity: 0.55, marginBottom: '0.5rem' }}>
                     Welcome, {profile.display_name}
                   </div>
                 )}
@@ -432,7 +337,7 @@ export default function GameApp() {
                 <div className="word-hira">{word.hiragana}</div>
                 {word.kanji && word.kanji !== word.hiragana && <div className="word-kanji">{word.kanji}</div>}
                 <div className="word-eng">{word.english}
-                  {word.jlpt && <span className="jlpt-badge" style={{ background: ({ 5: '#4CAF50', 4: '#2196F3', 3: '#FF9800', 2: '#E91E63', 1: '#9C27B0' })[word.jlpt] }}>N{word.jlpt}</span>}
+                  {word.jlpt && <span className="jlpt-badge" style={{ background: ({ 5: '#728b76', 4: '#126881', 3: '#da977c', 2: '#c14e3e', 1: '#39326c' })[word.jlpt] }}>N{word.jlpt}</span>}
                 </div>
                 <div className="mode-badge">{mode === 'polite' ? '丁寧 Polite' : 'カジュアル Casual'}</div>
               </div>
@@ -449,10 +354,48 @@ export default function GameApp() {
 
                 <div className="grid-area">
                   <div className="conj-grid">
-                    {CELLS.map((k) => renderCell(k))}
+                    {CELLS.map((k) => {
+                      const lb = CELL_LABELS[k]
+                      const isOk = cellOk[k]
+                      const isRevealed = cellRevealed[k]
+                      const att = attempts[k]
+                      const shaking = cellShake[k]
+                      const flashing = cellFlash[k]
+                      let cls = 'ginput'
+                      if (isOk) cls += ' ok'
+                      else if (isRevealed) cls += ' shown'
+                      else if (shaking) cls += ' err'
+                      if (flashing) cls += ' flash-ok'
+
+                      return (
+                        <div className="gcell" key={k}>
+                          {isRevealed ? (
+                            <div className={cls} style={{ padding: '0.4rem 0.35rem', textAlign: 'center' }}>{correct[k]}</div>
+                          ) : (
+                            <input
+                              ref={(el) => { inputRefs.current[k] = el }}
+                              className={cls}
+                              value={isOk ? correct[k] : answers[k]}
+                              onChange={(e) => !isOk && onInputChange(k, e.target.value)}
+                              onKeyDown={(e) => onInputKey(e, k)}
+                              disabled={isOk || gridDone}
+                              placeholder={lb.placeholder}
+                              autoComplete="off"
+                              autoCorrect="off"
+                              spellCheck="false"
+                            />
+                          )}
+                          <div className={`gcell-hint ${isOk ? 'green' : att > 0 && !isRevealed ? 'red' : ''}`}>
+                            {isOk ? '\u2713' : isRevealed ? 'revealed' : att > 0 ? `${3 - att} ${3 - att === 1 ? 'try' : 'tries'} left` : '\u00A0'}
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
 
-                  {gridDone && (
+                  {!gridDone ? (
+                    <button className="btn-submit" onClick={onGridSubmit}>Check Answers</button>
+                  ) : (
                     <>
                       <div className={`result-banner ${wordScore >= 7 ? 'perfect' : 'good'}`}>
                         {wordScore >= 7 ? 'Perfect! +7' : `+${wordScore.toFixed(1)} points`}
@@ -518,11 +461,11 @@ export default function GameApp() {
                 )}
                 <div>
                   <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{profile?.display_name}</div>
-                  <div style={{ fontSize: '0.75rem', color: '#888' }}>{user.email}</div>
+                  <div style={{ fontSize: '0.75rem', color: '#494850', opacity: 0.55 }}>{user.email}</div>
                 </div>
                 <button
                   onClick={signOut}
-                  style={{ marginLeft: 'auto', padding: '0.3rem 0.8rem', border: '1px solid #ccc', borderRadius: '4px', background: 'none', cursor: 'pointer', fontSize: '0.8rem' }}
+                  style={{ marginLeft: 'auto', padding: '0.3rem 0.8rem', border: '1px solid rgba(73,72,80,0.2)', borderRadius: '4px', background: 'none', cursor: 'pointer', fontSize: '0.8rem', color: '#494850' }}
                 >
                   Sign Out
                 </button>
